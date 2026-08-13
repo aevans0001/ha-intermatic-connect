@@ -1,0 +1,38 @@
+set_weekly_schedule:
+  name: Set weekly schedule
+  description: Replace or add the timer's native weekly on/off schedule for a circuit.
+  target:
+    entity:
+      integration: intermatic_connect
+      domain: switch
+  fields:
+    on_time:
+      name: On time
+      required: true
+      selector:
+        time:
+    off_time:
+      name: Off time
+      required: true
+      selector:
+        time:
+    days:
+      name: Days
+      required: true
+      example: [monday, tuesday, wednesday, thursday, friday]
+      selector:
+        select:
+          multiple: true
+          options:
+            - monday
+            - tuesday
+            - wednesday
+            - thursday
+            - friday
+            - saturday
+            - sunday
+    replace:
+      name: Replace existing circuit schedule
+      default: true
+      selector:
+        boolean:

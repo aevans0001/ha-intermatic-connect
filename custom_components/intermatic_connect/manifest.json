@@ -1,0 +1,11 @@
+{
+  "domain": "intermatic_connect",
+  "name": "Intermatic Connect",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://www.intermatic.com/intermatic-connect",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "requirements": ["pycognito==2024.5.1"],
+  "version": "0.1.0"
+}
