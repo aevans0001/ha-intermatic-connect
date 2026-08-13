@@ -15,6 +15,8 @@ from .api import IntermaticApi
 from .const import CONF_REFRESH_TOKEN, CONF_REFRESH_USERNAME, PLATFORMS
 from .coordinator import IntermaticCoordinator
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register integration-level actions independently of loaded entries."""
