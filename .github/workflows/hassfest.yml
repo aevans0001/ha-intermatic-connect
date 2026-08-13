@@ -1,0 +1,11 @@
+name: Hassfest
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+jobs:
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: home-assistant/actions/hassfest@master
