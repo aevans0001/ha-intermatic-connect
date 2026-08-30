@@ -13,6 +13,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
+from homeassistant.util import slugify
 
 from .api import decode_event, pick
 from .const import DOMAIN, OUTPUT_COMBINED
@@ -40,6 +41,23 @@ async def async_setup_entry(
     """Set up one combined schedule calendar for every timer."""
     coordinator: IntermaticCoordinator = entry.runtime_data
     registry = er.async_get(hass)
+
+    # Migrate the original generic entity ID (calendar.schedule) to a
+    # timer-specific ID such as calendar.pool_schedule.
+    for thing_id, thing in coordinator.data.items():
+        existing_entity_id = registry.async_get_entity_id(
+            "calendar", DOMAIN, f"{thing_id}_schedule"
+        )
+        timer_name = str(
+            pick(thing, "FriendlyName", default="Intermatic") or "Intermatic"
+        )
+        desired_entity_id = f"calendar.{slugify(f'{timer_name}_schedule')}"
+        if existing_entity_id and existing_entity_id != desired_entity_id:
+            registry.async_update_entity(
+                existing_entity_id,
+                new_entity_id=desired_entity_id,
+            )
+
     active_ids = {f"{thing_id}_schedule" for thing_id in coordinator.data}
     for entity in list(registry.entities.values()):
         if (
@@ -49,6 +67,7 @@ async def async_setup_entry(
             and entity.unique_id not in active_ids
         ):
             registry.async_remove(entity.entity_id)
+
     async_add_entities(
         IntermaticScheduleCalendar(coordinator, thing_id)
         for thing_id in coordinator.data
@@ -61,12 +80,16 @@ class IntermaticScheduleCalendar(
     """Expose on/off schedule pairs as ordinary duration events."""
 
     _attr_has_entity_name = True
-    _attr_name = "Schedule"
 
     def __init__(self, coordinator: IntermaticCoordinator, thing_id: str) -> None:
         super().__init__(coordinator)
         self.thing_id = thing_id
         self._attr_unique_id = f"{thing_id}_schedule"
+        timer_name = str(
+            pick(coordinator.data[thing_id], "FriendlyName", default="Intermatic")
+            or "Intermatic"
+        )
+        self._attr_name = f"{timer_name} Schedule"
 
     @property
     def thing(self) -> dict[str, Any]:
@@ -112,14 +135,26 @@ class IntermaticScheduleCalendar(
         raw = pick(self.thing, "Schedule", default={}) or {}
         circuits = self._circuits()
         occurrences: dict[int, list[tuple[datetime, dict[str, Any]]]] = defaultdict(list)
+
+        # When an on and off slot have the same time, the timer means the
+        # circuit stays on through the next day (for example, midnight to
+        # midnight). Move that off occurrence to the following day.
+        on_times: dict[int, set[tuple[int, int]]] = defaultdict(set)
+        decoded_events: list[dict[str, Any]] = []
+        for value in raw.values():
+            schedule_event = decode_event(str(value))
+            if schedule_event and schedule_event["circuit_mask"] in circuits:
+                decoded_events.append(schedule_event)
+                if schedule_event["turn_on"]:
+                    on_times[schedule_event["circuit_mask"]].add(
+                        (schedule_event["hour"], schedule_event["minute"])
+                    )
+
         cursor = start.date() - timedelta(days=1)
         while cursor <= end.date() + timedelta(days=1):
-            for value in raw.values():
-                schedule_event = decode_event(str(value))
-                if (
-                    not schedule_event
-                    or schedule_event["circuit_mask"] not in circuits
-                    or cursor.weekday() not in _WEEK_CODE_DAYS.get(schedule_event["week_code"], set())
+            for schedule_event in decoded_events:
+                if cursor.weekday() not in _WEEK_CODE_DAYS.get(
+                    schedule_event["week_code"], set()
                 ):
                     continue
                 occurs_at = datetime.combine(
@@ -129,7 +164,15 @@ class IntermaticScheduleCalendar(
                     ),
                     tzinfo=start.tzinfo,
                 )
-                occurrences[schedule_event["circuit_mask"]].append((occurs_at, schedule_event))
+                if (
+                    not schedule_event["turn_on"]
+                    and (schedule_event["hour"], schedule_event["minute"])
+                    in on_times[schedule_event["circuit_mask"]]
+                ):
+                    occurs_at += timedelta(days=1)
+                occurrences[schedule_event["circuit_mask"]].append(
+                    (occurs_at, schedule_event)
+                )
             cursor += timedelta(days=1)
 
         result: list[CalendarEvent] = []
@@ -142,11 +185,12 @@ class IntermaticScheduleCalendar(
                 if pending_on is None or occurs_at <= pending_on[0]:
                     continue
                 if pending_on[0] < end and occurs_at > start:
+                    end_time = occurs_at.strftime("%I:%M %p").lstrip("0")
                     result.append(
                         CalendarEvent(
                             start=pending_on[0],
                             end=occurs_at,
-                            summary=circuits[circuit_mask],
+                            summary=f"{circuits[circuit_mask]} — until {end_time}",
                             uid=(
                                 f"{self.thing_id}-{circuit_mask}-"
                                 f"{pending_on[1]['uid']}-{schedule_event['uid']}-"
