@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+
+from homeassistant.helpers.sun import get_astral_event_date
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -131,6 +133,27 @@ class IntermaticScheduleCalendar(
             )
         return circuits
 
+    def _occurs_at(
+        self,
+        day: datetime.date,
+        schedule_event: dict[str, Any],
+        tzinfo: Any,
+    ) -> datetime:
+        """Return the local instant for a clock or astronomic timer event."""
+        if schedule_event["is_astronomic"]:
+            event_name = "sunrise" if schedule_event["is_dawn"] else "sunset"
+            event_time = get_astral_event_date(self.hass, event_name, day)
+            if event_time is None:
+                raise ValueError(f"Unable to calculate {event_name}")
+            return event_time + timedelta(minutes=schedule_event["astro_offset"])
+        return datetime.combine(
+            day,
+            datetime.min.time().replace(
+                hour=schedule_event["hour"], minute=schedule_event["minute"]
+            ),
+            tzinfo=tzinfo,
+        )
+
     def _events(self, start: datetime, end: datetime) -> list[CalendarEvent]:
         raw = pick(self.thing, "Schedule", default={}) or {}
         circuits = self._circuits()
@@ -157,15 +180,10 @@ class IntermaticScheduleCalendar(
                     schedule_event["week_code"], set()
                 ):
                     continue
-                occurs_at = datetime.combine(
-                    cursor,
-                    datetime.min.time().replace(
-                        hour=schedule_event["hour"], minute=schedule_event["minute"]
-                    ),
-                    tzinfo=start.tzinfo,
-                )
+                occurs_at = self._occurs_at(cursor, schedule_event, start.tzinfo)
                 if (
                     not schedule_event["turn_on"]
+                    and not schedule_event["is_astronomic"]
                     and (schedule_event["hour"], schedule_event["minute"])
                     in on_times[schedule_event["circuit_mask"]]
                 ):
@@ -185,12 +203,15 @@ class IntermaticScheduleCalendar(
                 if pending_on is None or occurs_at <= pending_on[0]:
                     continue
                 if pending_on[0] < end and occurs_at > start:
-                    end_time = occurs_at.strftime("%I:%M %p").lstrip("0")
+                    end_time = occurs_at.strftime("%I:%M %p").lstrip("0").lower()
                     result.append(
                         CalendarEvent(
                             start=pending_on[0],
                             end=occurs_at,
-                            summary=f"{circuits[circuit_mask]} — until {end_time}",
+                            # Home Assistant supplies the start time in the
+                            # calendar grid, so this displays as:
+                            # "10:00 am - 9:00 pm Pump".
+                            summary=f"- {end_time} {circuits[circuit_mask]}",
                             uid=(
                                 f"{self.thing_id}-{circuit_mask}-"
                                 f"{pending_on[1]['uid']}-{schedule_event['uid']}-"
@@ -200,3 +221,5 @@ class IntermaticScheduleCalendar(
                     )
                 pending_on = None
         return sorted(result, key=lambda item: item.start)
+
+

@@ -305,6 +305,9 @@ def decode_event(raw: str) -> dict[str, Any] | None:
     return {
         "uid": values[0] | (values[1] << 8),
         "flags": values[2],
+        "is_astronomic": bool(values[2] & 0x04),
+        "is_dawn": bool(values[2] & 0x08),
+        "astro_offset": values[11] - 256 if values[11] & 0x80 else values[11],
         "month": values[3],
         "day": values[4] | (values[5] << 8),
         "week_code": values[6],
@@ -313,3 +316,4 @@ def decode_event(raw: str) -> dict[str, Any] | None:
         "turn_on": values[12] == 100,
         "circuit_mask": values[13],
     }
+
