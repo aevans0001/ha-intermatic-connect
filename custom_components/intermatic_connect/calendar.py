@@ -203,7 +203,7 @@ class IntermaticScheduleCalendar(
                 if pending_on is None or occurs_at <= pending_on[0]:
                     continue
                 if pending_on[0] < end and occurs_at > start:
-                    end_time = occurs_at.strftime("%I:%M %p").lstrip("0").lower()
+                    end_time = occurs_at.strftime("%I:%M %p").lstrip("0")
                     result.append(
                         CalendarEvent(
                             start=pending_on[0],
@@ -221,5 +221,6 @@ class IntermaticScheduleCalendar(
                     )
                 pending_on = None
         return sorted(result, key=lambda item: item.start)
+
 
 
