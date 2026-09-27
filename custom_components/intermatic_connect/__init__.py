@@ -12,7 +12,7 @@ from homeassistant.helpers.typing import ConfigType
 import voluptuous as vol
 
 from .api import IntermaticApi
-from .const import CONF_REFRESH_TOKEN, CONF_REFRESH_USERNAME, PLATFORMS
+from .const import CONF_REFRESH_TOKEN, CONF_REFRESH_USERNAME, DOMAIN, PLATFORMS
 from .coordinator import IntermaticCoordinator
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
