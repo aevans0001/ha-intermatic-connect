@@ -4,6 +4,7 @@
   "codeowners": [],
   "config_flow": true,
   "documentation": "https://www.intermatic.com/intermatic-connect",
+  "issue_tracker": "https://github.com/aevans0001/ha-intermatic-connect/issues",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "requirements": [
