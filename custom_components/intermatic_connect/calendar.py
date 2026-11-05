@@ -15,7 +15,6 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
-from homeassistant.util import slugify
 
 from .api import decode_event, pick
 from .const import DOMAIN, OUTPUT_COMBINED
@@ -43,22 +42,6 @@ async def async_setup_entry(
     """Set up one combined schedule calendar for every timer."""
     coordinator: IntermaticCoordinator = entry.runtime_data
     registry = er.async_get(hass)
-
-    # Migrate the original generic entity ID (calendar.schedule) to a
-    # timer-specific ID such as calendar.pool_schedule.
-    for thing_id, thing in coordinator.data.items():
-        existing_entity_id = registry.async_get_entity_id(
-            "calendar", DOMAIN, f"{thing_id}_schedule"
-        )
-        timer_name = str(
-            pick(thing, "FriendlyName", default="Intermatic") or "Intermatic"
-        )
-        desired_entity_id = f"calendar.{slugify(f'{timer_name}_schedule')}"
-        if existing_entity_id and existing_entity_id != desired_entity_id:
-            registry.async_update_entity(
-                existing_entity_id,
-                new_entity_id=desired_entity_id,
-            )
 
     active_ids = {f"{thing_id}_schedule" for thing_id in coordinator.data}
     for entity in list(registry.entities.values()):
