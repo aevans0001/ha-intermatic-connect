@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Intermatic Connect",
+        "description": "Enter the same account used by the Intermatic Connect Android app.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to Intermatic",
+      "invalid_auth": "Invalid email or password",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "This Intermatic account is already configured"
+    }
+  }
+}
