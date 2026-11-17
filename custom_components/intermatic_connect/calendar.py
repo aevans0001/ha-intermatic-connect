@@ -10,13 +10,15 @@ from typing import Any
 
 from homeassistant.components.calendar import CalendarEntity, CalendarEvent
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .api import decode_event, pick
+from .ascend import is_ascend
+from .ascend_calendar import AscendScheduleCalendar
 from .const import DOMAIN, OUTPUT_COMBINED
 from .coordinator import IntermaticCoordinator
 
@@ -53,10 +55,26 @@ async def async_setup_entry(
         ):
             registry.async_remove(entity.entity_id)
 
-    async_add_entities(
-        IntermaticScheduleCalendar(coordinator, thing_id)
-        for thing_id in coordinator.data
-    )
+    known: set[str] = set()
+
+    @callback
+    def add_new_timers() -> None:
+        entities: list[IntermaticScheduleCalendar | AscendScheduleCalendar] = []
+        for identifier, thing in coordinator.data.items():
+            if identifier in known:
+                continue
+            entity_type = (
+                AscendScheduleCalendar
+                if is_ascend(thing)
+                else IntermaticScheduleCalendar
+            )
+            entities.append(entity_type(coordinator, identifier))
+            known.add(identifier)
+        if entities:
+            async_add_entities(entities)
+
+    add_new_timers()
+    entry.async_on_unload(coordinator.async_add_listener(add_new_timers))
 
 
 class IntermaticScheduleCalendar(
@@ -78,7 +96,7 @@ class IntermaticScheduleCalendar(
 
     @property
     def thing(self) -> dict[str, Any]:
-        return self.coordinator.data[self.thing_id]
+        return self.coordinator.data.get(self.thing_id, {})
 
     @property
     def event(self) -> CalendarEvent | None:

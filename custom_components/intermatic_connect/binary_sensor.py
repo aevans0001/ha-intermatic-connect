@@ -6,12 +6,13 @@ from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .api import pick
+from .ascend import is_ascend
 from .const import DOMAIN
 from .coordinator import IntermaticCoordinator
 
@@ -23,10 +24,20 @@ async def async_setup_entry(
 ) -> None:
     """Set up freeze-protection sensors for each timer."""
     coordinator: IntermaticCoordinator = entry.runtime_data
-    async_add_entities(
-        IntermaticFreezeProtectionSensor(coordinator, thing_id)
-        for thing_id in coordinator.data
-    )
+    known: set[str] = set()
+
+    @callback
+    def add_new_timers() -> None:
+        entities: list[IntermaticFreezeProtectionSensor] = []
+        for thing_id, thing in coordinator.data.items():
+            if not is_ascend(thing) and thing_id not in known:
+                entities.append(IntermaticFreezeProtectionSensor(coordinator, thing_id))
+                known.add(thing_id)
+        if entities:
+            async_add_entities(entities)
+
+    add_new_timers()
+    entry.async_on_unload(coordinator.async_add_listener(add_new_timers))
 
 
 class IntermaticFreezeProtectionSensor(
@@ -46,7 +57,7 @@ class IntermaticFreezeProtectionSensor(
     @property
     def thing(self) -> dict[str, Any]:
         """Return this timer's coordinator data."""
-        return self.coordinator.data[self.thing_id]
+        return self.coordinator.data.get(self.thing_id, {})
 
     @property
     def is_on(self) -> bool:
@@ -55,7 +66,11 @@ class IntermaticFreezeProtectionSensor(
 
     @property
     def available(self) -> bool:
-        return super().available and int(pick(self.thing, "Connected", default=1) or 0) != 0
+        return (
+            super().available
+            and bool(self.thing)
+            and int(pick(self.thing, "Connected", default=1) or 0) != 0
+        )
 
     @property
     def device_info(self) -> DeviceInfo:

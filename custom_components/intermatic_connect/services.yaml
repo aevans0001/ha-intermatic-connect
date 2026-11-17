@@ -36,3 +36,25 @@ set_weekly_schedule:
       default: true
       selector:
         boolean:
+
+set_ascend_schedule:
+  name: Set ASCEND schedule
+  description: Write native ASCEND events using HH:MM, sunrise, or sunset. Does not change operating mode. Each selected weekday consumes one of 42 slots. An empty list clears the schedule only in Manual mode.
+  target:
+    entity:
+      integration: intermatic_connect
+      domain: switch
+  fields:
+    events:
+      name: Events
+      description: List of events with time, state (on/off), days, and optional solar offset in minutes (-120 to 120).
+      required: true
+      example: '[{"time": "sunset", "state": "on", "days": ["monday"], "offset": 30}, {"time": "23:00", "state": "off", "days": ["monday"]}]'
+      selector:
+        object:
+    replace:
+      name: Replace entire schedule
+      description: When disabled, add events to the timer’s latest reported schedule.
+      default: true
+      selector:
+        boolean:

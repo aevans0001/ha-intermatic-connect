@@ -5,16 +5,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import hashlib
-import hmac
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import time
-import logging
 from typing import Any
 
 import aiohttp
 from pycognito import Cognito
 
+from .ascend import AscendClient, is_ascend, normalize_timer
 from .const import (
     API_BASE,
     CLIENT_ID,
@@ -24,20 +23,9 @@ from .const import (
     RELAY_ON,
     USER_POOL_ID,
 )
+from .exceptions import IntermaticAuthError, IntermaticConnectionError, IntermaticError
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class IntermaticError(Exception):
-    """Base Intermatic error."""
-
-
-class IntermaticAuthError(IntermaticError):
-    """Authentication failed."""
-
-
-class IntermaticConnectionError(IntermaticError):
-    """Cloud connection failed."""
 
 
 class IntermaticApi:
@@ -59,6 +47,8 @@ class IntermaticApi:
         self.id_token: str | None = None
         self.access_token: str | None = None
         self._auth_lock = asyncio.Lock()
+        self._ascend = AscendClient(self._authorized_request, run_sync)
+        self._rest_things: list[dict[str, Any]] = []
 
     def _new_cognito(self) -> Cognito:
         return Cognito(
@@ -122,18 +112,34 @@ class IntermaticApi:
     async def _request(
         self, method: str, path: str, *, json: dict[str, Any] | None = None
     ) -> Any:
+        return await self._authorized_request(
+            method, f"{API_BASE}{path}", json=json, bearer=True
+        )
+
+    async def _authorized_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        bearer: bool = False,
+    ) -> Any:
+        """Use the endpoint's observed auth scheme and never forward tokens on redirects."""
         if not self.id_token:
             await self._refresh()
         for attempt in range(2):
             try:
                 async with self._session.request(
                     method,
-                    f"{API_BASE}{path}",
+                    url,
                     headers={
-                        "Authorization": f"Bearer {self.id_token}",
+                        "Authorization": f"Bearer {self.id_token}"
+                        if bearer
+                        else self.id_token,
                         "Cache-Control": "no-cache",
                     },
                     json=json,
+                    allow_redirects=False,
                     timeout=aiohttp.ClientTimeout(total=20),
                 ) as response:
                     if response.status == 401 and attempt == 0:
@@ -141,13 +147,13 @@ class IntermaticApi:
                         await self._refresh()
                         continue
                     body = await response.text()
-                    if response.status >= 400:
+                    if response.status >= 300:
                         if response.status in (401, 403):
                             raise IntermaticAuthError(
                                 f"Intermatic rejected the credentials ({response.status})"
                             )
                         raise IntermaticConnectionError(
-                            f"Intermatic returned {response.status}: {body[:300]}"
+                            f"Intermatic returned HTTP {response.status}"
                         )
                     if not body:
                         return None
@@ -155,11 +161,11 @@ class IntermaticApi:
                         return await response.json(content_type=None)
                     except ValueError:
                         return body
-            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-                raise IntermaticConnectionError(str(err)) from err
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                raise IntermaticConnectionError("Intermatic request failed") from None
         raise IntermaticAuthError("Authentication expired")
 
-    async def get_things(self) -> list[dict[str, Any]]:
+    async def get_rest_things(self) -> list[dict[str, Any]]:
         """Return all timers, including their native schedules."""
         data = await self._request("GET", "/things?include=schedule")
         if isinstance(data, list):
@@ -170,13 +176,70 @@ class IntermaticApi:
                     return data[key]
         raise IntermaticConnectionError("Unexpected response from /things")
 
+    async def get_things(self, *, include_states: bool = True) -> list[dict[str, Any]]:
+        """Merge PE/ETW REST timers and ASCEND registry/shadow timers."""
+        rest_error = ascend_error = None
+        try:
+            rest = await self.get_rest_things()
+            if not all(isinstance(item, dict) for item in rest):
+                raise IntermaticConnectionError("Invalid REST timer record")
+            self._rest_things = rest
+        except IntermaticError as err:
+            rest_error = err
+            rest = [dict(item, Connected=0) for item in self._rest_things]
+        try:
+            records = await self._ascend.discover()
+        except IntermaticError as err:
+            ascend_error = err
+            records = list(self._ascend.registry.values())
+        rest_ids = {thing_name(item) for item in rest}
+        records = [item for item in records if item["thingName"] not in rest_ids]
+        if (rest_error or ascend_error) and not rest and not records:
+            raise rest_error or ascend_error
+        if rest_error:
+            _LOGGER.warning(
+                "PE/ETW discovery unavailable; using previously discovered timers"
+            )
+        if ascend_error:
+            _LOGGER.warning(
+                "ASCEND discovery unavailable; using previously discovered timers"
+            )
+        if include_states and not ascend_error:
+            try:
+                ascend = await self._ascend.states(records)
+            except IntermaticError:
+                if not rest or rest_error:
+                    raise
+                _LOGGER.warning(
+                    "ASCEND state unavailable; PE/ETW timers remain available"
+                )
+                ascend = [normalize_timer(item) for item in records]
+        else:
+            ascend = [normalize_timer(item) for item in records]
+        return rest + ascend
+
     async def patch_thing(self, thing_name: str, values: dict[str, Any]) -> None:
         await self._request("PATCH", f"/things/{thing_name}", json=values)
 
-    async def set_relay(self, thing_name: str, relay: int, on: bool) -> None:
+    async def set_relay(self, identifier: str, relay: int, on: bool) -> dict | None:
+        rest_ids = {thing_name(item) for item in self._rest_things}
+        if identifier in self._ascend.registry and identifier not in rest_ids:
+            if relay != 1:
+                raise IntermaticError("ASCEND timers have one relay")
+            return await self._ascend.set_relay(identifier, on)
+        if identifier not in rest_ids:
+            raise IntermaticError("Timer is no longer registered")
         await self.patch_thing(
-            thing_name, {f"Relay{relay}": RELAY_ON if on else RELAY_OFF}
+            identifier, {f"Relay{relay}": RELAY_ON if on else RELAY_OFF}
         )
+
+    async def set_mode(self, identifier: str, option: str) -> dict:
+        return await self._ascend.set_mode(identifier, option)
+
+    async def set_ascend_schedule(
+        self, identifier: str, events: list[dict], replace: bool = True
+    ) -> dict:
+        return await self._ascend.set_schedule(identifier, events, replace)
 
     async def set_weekly_schedule(
         self,
@@ -186,8 +249,18 @@ class IntermaticApi:
         off_time: time,
         days: Iterable[str],
         replace: bool = True,
-    ) -> None:
+    ) -> dict | None:
         """Set a native weekly on/off schedule for one circuit configuration."""
+        if is_ascend(thing):
+            days = list(days)
+            return await self._ascend.set_schedule(
+                thing_name(thing),
+                [
+                    {"time": on_time, "days": days, "state": "on"},
+                    {"time": off_time, "days": days, "state": "off"},
+                ],
+                replace,
+            )
         raw_schedule = thing.get("Schedule") or thing.get("schedule") or {}
         schedule = {int(key): str(value) for key, value in raw_schedule.items()}
         if replace:

@@ -1,7 +1,7 @@
 """Constants for Intermatic Connect."""
 
 DOMAIN = "intermatic_connect"
-PLATFORMS = ["switch", "binary_sensor", "calendar"]
+PLATFORMS = ["switch", "binary_sensor", "calendar", "select"]
 
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_REFRESH_USERNAME = "refresh_username"

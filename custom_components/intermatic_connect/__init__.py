@@ -33,6 +33,17 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         },
         func="async_set_weekly_schedule",
     )
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        "set_ascend_schedule",
+        entity_domain=SWITCH_DOMAIN,
+        schema={
+            vol.Required("events"): [dict],
+            vol.Optional("replace", default=True): cv.boolean,
+        },
+        func="async_set_ascend_schedule",
+    )
     return True
 
 

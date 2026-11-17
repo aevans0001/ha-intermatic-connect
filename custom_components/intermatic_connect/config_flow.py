@@ -32,7 +32,7 @@ class IntermaticConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             try:
                 await api.authenticate(user_input[CONF_PASSWORD])
-                things = await api.get_things()
+                things = await api.get_things(include_states=False)
             except IntermaticAuthError:
                 errors["base"] = "invalid_auth"
             except IntermaticConnectionError:
