@@ -28,14 +28,21 @@ class IntermaticCoordinator(DataUpdateCoordinator[dict[str, dict]]):
         self._pending_relays: dict[tuple[str, int], bool] = {}
 
     async def async_set_relay(self, thing_id: str, relay: int, on: bool) -> None:
-        """Send a command and retain its requested state until cloud confirms it."""
-        await self.api.set_relay(thing_id, relay, on)
+        """Apply confirmed ASCEND state; preserve PE/ETW's optimistic behavior."""
+        confirmed = await self.api.set_relay(thing_id, relay, on)
+        if confirmed is not None:
+            self.async_set_updated_data({**self.data, thing_id: confirmed})
+            return
         self._pending_relays[(thing_id, relay)] = on
         optimistic = {key: dict(value) for key, value in self.data.items()}
         if thing := optimistic.get(thing_id):
             thing[f"Relay{relay}"] = RELAY_ON if on else RELAY_OFF
         self.async_set_updated_data(optimistic)
         self.hass.async_create_task(self._async_confirm_pending_relays())
+
+    async def async_set_mode(self, thing_id: str, option: str) -> None:
+        confirmed = await self.api.set_mode(thing_id, option)
+        self.async_set_updated_data({**self.data, thing_id: confirmed})
 
     async def _async_confirm_pending_relays(self) -> None:
         """Poll briefly after a command; Intermatic cloud updates are eventual."""

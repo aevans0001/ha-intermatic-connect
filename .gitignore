@@ -3,3 +3,8 @@ __pycache__/
 .DS_Store
 intermatic_connect_debug.log
 .storage/
+.venv/
+.env
+.env.*
+.pytest_cache/
+.ruff_cache/
